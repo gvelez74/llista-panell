@@ -3314,6 +3314,18 @@ Quan mostris llistes de creadors, inclou nom, territori i categories. Per als po
 let assistentHistory = [];
 let assistentBusy = false;
 
+function assistentReset() {
+  if (assistentBusy) return;
+  assistentHistory = [];
+  const msgs = document.getElementById('assistent-msgs');
+  if (!msgs) return;
+  msgs.innerHTML = '';
+  assistentAppendMsg('ai', getApiKey()
+    ? 'Conversa reiniciada. Fes la teva consulta!'
+    : `Hola! Per activar l'assistent necessito la teva <strong>API Key d'Anthropic</strong>.<br><br><div style="margin-top:10px"><input type="password" id="assistent-key-inline" placeholder="sk-ant-api03-..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font);background:var(--bg-input)"><button class="btn btn-accent" style="margin-top:8px;width:100%" onclick="assistentActivateKey()">Activar</button></div>`
+  );
+}
+
 function renderTabAssistent() {
   const el = document.getElementById('tab-assistent');
   if (!el || el.dataset.loaded) return;
@@ -3329,6 +3341,10 @@ function renderTabAssistent() {
             <path d="M7 10h6M10 7v6"/>
           </svg>
           Fes la teva consulta sobre Llista
+          <button onclick="assistentReset()" title="Esborrar conversa" style="margin-left:auto;padding:4px 10px;font-size:11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;cursor:pointer;color:var(--text-muted);font-family:var(--font);display:flex;align-items:center;gap:5px;transition:all 0.15s;" onmouseover="this.style.background='rgba(220,38,38,0.06)';this.style.color='var(--danger)';this.style.borderColor='rgba(220,38,38,0.2)'" onmouseout="this.style.background='transparent';this.style.color='var(--text-muted)';this.style.borderColor='var(--border)'">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l10 10M13 3L3 13"/></svg>
+            Netejar
+          </button>
         </div>
         <div class="assistent-header-sub">Assistent connectat al MCP de Llista.cat · 1.265 creadors · 181.104 posts · 1.267 transcripcions</div>
         <div class="assistent-chips" id="assistent-chips">
