@@ -1443,7 +1443,7 @@ label { font-size: 11px; font-weight: 600; color: var(--text-secondary); display
         <span class="topbar-title">Comunicació i difusió</span>
         <div class="topbar-right">
           <span id="comm-char-count" style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);display:none"></span>
-          <span class="badge badge-info">claude-haiku-4-5</span>
+          <span class="badge badge-info" id="comm-model-badge">claude-haiku-4-5</span>
         </div>
       </div>
 
@@ -1773,14 +1773,16 @@ CREATE POLICY "allow_all" ON llista_members
     <hr class="sep">
     <div class="form-group">
       <label>Model IA</label>
-      <select style="width:100%">
-        <option selected>claude-haiku-4-5-20251001</option>
-        <option>claude-sonnet-4-5-20251022</option>
+      <select id="model-select" style="width:100%">
+        <option value="claude-haiku-4-5-20251001">Haiku 4.5 — ràpid i econòmic</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6 — equilibrat (recomanat)</option>
+        <option value="claude-opus-4-7">Opus 4.7 — màxima capacitat</option>
       </select>
+      <div style="font-size:10.5px;color:var(--text-muted);margin-top:5px;">S'aplica a l'Assistent i al mòdul Comunicació.</div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeSettings()">Cancel·lar</button>
-      <button class="btn btn-accent" onclick="saveApiKey()">Desar configuració</button>
+      <button class="btn btn-accent" onclick="saveSettings()">Desar configuració</button>
     </div>
   </div>
 </div>
@@ -1791,7 +1793,7 @@ CREATE POLICY "allow_all" ON llista_members
 /* ══════════════════════════════════════════
    CONFIGURACIÓ GLOBAL
 ═══════════════════════════════════════════ */
-const MODEL = 'claude-haiku-4-5-20251001';
+function getModel() { return localStorage.getItem('llista_model') || 'claude-haiku-4-5-20251001'; }
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const GH_REPO = 'gvelez74/llista-recerca';
 const GH_FILE = 'dades/suggeriments.csv';
@@ -1838,19 +1840,28 @@ function updateApiStatus() {
     dot.className = 'status-dot dot-err';
     txt.textContent = 'No configurada';
   }
+  const badge = document.getElementById('comm-model-badge');
+  if (badge) {
+    const m = getModel();
+    badge.textContent = m.includes('opus') ? 'claude-opus-4' : m.includes('sonnet') ? 'claude-sonnet-4' : 'claude-haiku-4-5';
+  }
 }
 
 function openSettings() {
   document.getElementById('api-key-input').value = getApiKey();
+  document.getElementById('model-select').value = getModel();
   document.getElementById('settings-modal').classList.add('open');
 }
 function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
-function saveApiKey() {
+function saveSettings() {
   const k = document.getElementById('api-key-input').value.trim();
   if (k) localStorage.setItem('llista_api_key', k);
+  const m = document.getElementById('model-select').value;
+  if (m) localStorage.setItem('llista_model', m);
   updateApiStatus();
   closeSettings();
 }
+function saveApiKey() { saveSettings(); }
 function saveGhToken() {
   const t = document.getElementById('gh-token-input').value.trim();
   if (t) { localStorage.setItem('llista_gh_token', t); alert('Token GitHub desat.'); }
@@ -1934,7 +1945,7 @@ async function mcpViaAPI(prompt) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
     body: JSON.stringify({
-      model: MODEL,
+      model: getModel(),
       max_tokens: 8192,
       system: 'Executa l\'eina MCP demanada i ja està. No afegeixis text addicional.',
       tools: MCP_TOOLS,
@@ -2975,7 +2986,7 @@ ESTRUCTURA:
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'prompt-caching-2024-07-31', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: JSON.stringify({
-        model: MODEL, max_tokens: 4096,
+        model: getModel(), max_tokens: 4096,
         system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: prompt }]
       })
@@ -3175,7 +3186,7 @@ async function sendChat(module) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: JSON.stringify({
-        model: MODEL, max_tokens: 1000,
+        model: getModel(), max_tokens: 1000,
         system: SYSTEM_PROMPTS[module],
         messages: chatHistories[module]
       })
@@ -3517,7 +3528,7 @@ async function assistentSend() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'prompt-caching-2024-07-31', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: MODEL,
+          model: getModel(),
           max_tokens: 1000,
           system: [{ type: 'text', text: MCP_SYSTEM, cache_control: { type: 'ephemeral' } }],
           tools: MCP_TOOLS.map((t, i) => i === MCP_TOOLS.length - 1 ? { ...t, cache_control: { type: 'ephemeral' } } : t),
