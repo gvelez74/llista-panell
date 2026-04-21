@@ -60,7 +60,7 @@ Colors actuals del projecte **Llista.cat** (panell d'administració) — paleta 
 ### Llista.cat — Panell de gestió
 - Single-file HTML (tot en un fitxer: HTML + CSS + JS)
 - Fitxer principal: `Projecte llista.html`
-- 5 mòduls actius: Anàlisi de dades, Recerca creadors, Comunicació, Seguiment (Kanban), Finances
+- 6 mòduls actius: Anàlisi de dades, Recerca creadors, Comunicació, Tendències, Seguiment (Kanban), Finances
 - Backend: Supabase (`dqwteqgdwmivepkdtehy.supabase.co`)
 - API Claude: `claude-haiku-4-5-20251001` · clau a localStorage `llista_api_key`
 - MCP: `https://llista.lacuinadel.cat/public/mcp` (JSON-RPC 2.0, POST, `Content-Type: text/plain` per evitar CORS preflight)
@@ -83,6 +83,7 @@ Documentació i instruccions de configuració: **`agent-factures.md`**
 | Anàlisi de dades | [modul-analisi.md](modul-analisi.md) |
 | Recerca de creadors | [modul-recerca.md](modul-recerca.md) |
 | Comunicació | [modul-comunicacio.md](modul-comunicacio.md) |
+| Tendències | [modul-tendencies.md](modul-tendencies.md) |
 | Seguiment (Kanban) | [modul-kanban.md](modul-kanban.md) |
 | Finances | [modul-finances.md](modul-finances.md) |
 
