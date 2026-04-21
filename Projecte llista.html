@@ -2397,7 +2397,8 @@ async function loadRecerca() {
     const meta = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, { headers });
     if (!meta.ok) throw new Error(`GitHub API: ${meta.status}`);
     const json = await meta.json();
-    const csv = atob(json.content.replace(/\n/g, ''));
+    const bytes = Uint8Array.from(atob(json.content.replace(/\n/g, '')), c => c.charCodeAt(0));
+    const csv = new TextDecoder('utf-8').decode(bytes);
     recercaData = parseCSV(csv);
     renderRecercaTable(recercaData);
 
@@ -2439,12 +2440,18 @@ function parseCSV(text) {
 }
 
 function getPct(row) {
-  // Gestiona '% Català', '% Catala', '% catala', amb valor float o int o "80.0" o "80"
-  const key = Object.keys(row).find(k => k.toLowerCase().includes('cat') && k.includes('%'));
+  // Busca columna amb '%' i 'cat', o 'pct', o 'percentatge'
+  const key = Object.keys(row).find(k => {
+    const lk = k.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    return (lk.includes('%') || lk.includes('pct') || lk.includes('percentat')) && lk.includes('cat');
+  });
   if (!key) return 0;
-  const raw = (row[key] || '').replace(',', '.');
+  const raw = (row[key] || '').replace(',', '.').trim();
+  if (!raw || raw === '-' || raw === '—') return 0;
   const n = parseFloat(raw);
-  return isNaN(n) ? 0 : n;
+  if (isNaN(n)) return 0;
+  // Si el valor és 0-1 (decimal), converteix a percentatge
+  return (n > 0 && n <= 1) ? n * 100 : n;
 }
 
 function renderRecercaTable(data) {
@@ -2476,8 +2483,9 @@ function renderRecercaTable(data) {
             </td>
             <td><span class="plat-pill">${r['Plataforma'] || '—'}</span></td>
             <td class="pct-stack">
-              <div class="pct-num">${pct.toFixed(1)}%</div>
-              <div class="pct-bar-bg"><div class="pct-bar-fill" style="width:${Math.min(pct,100)}%"></div></div>
+              ${pct > 0
+                ? `<div class="pct-num">${pct.toFixed(1)}%</div><div class="pct-bar-bg"><div class="pct-bar-fill" style="width:${Math.min(pct,100)}%"></div></div>`
+                : `<div class="pct-num" style="color:var(--text-muted)">—</div>`}
             </td>
             <td style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-secondary)">${r['Posts analitzats'] || '—'}</td>
             <td style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted)">${r['Data detecció'] || '—'}</td>
