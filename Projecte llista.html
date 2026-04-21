@@ -2973,10 +2973,10 @@ ESTRUCTURA:
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'prompt-caching-2024-07-31', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: JSON.stringify({
         model: MODEL, max_tokens: 4096,
-        system: systemPrompt,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: prompt }]
       })
     });
@@ -3492,17 +3492,19 @@ async function assistentSend() {
 
   try {
     let continueLoop = true;
-    let currentMessages = [...assistentHistory];
+    // Cap history to last 8 messages to stay within rate limits
+    const trimmedHistory = assistentHistory.slice(-8);
+    let currentMessages = [...trimmedHistory];
 
     while (continueLoop) {
       const res = await fetch(API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'prompt-caching-2024-07-31', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
           model: MODEL,
           max_tokens: 1000,
-          system: MCP_SYSTEM,
-          tools: MCP_TOOLS,
+          system: [{ type: 'text', text: MCP_SYSTEM, cache_control: { type: 'ephemeral' } }],
+          tools: MCP_TOOLS.map((t, i) => i === MCP_TOOLS.length - 1 ? { ...t, cache_control: { type: 'ephemeral' } } : t),
           messages: currentMessages
         })
       });
