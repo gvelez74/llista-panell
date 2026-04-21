@@ -1,0 +1,6 @@
+agent-factures.log
+*.pyc
+__pycache__/
+.DS_Store
+Factures/
+Factures entrades/
