@@ -11,14 +11,14 @@ Script diari (7:00h) que investiga les 5 principals novetats per categoria usant
 
 ## Configuració (primera vegada)
 
-Necessites tres variables d'entorn. Afegeix-les al teu `~/.zshrc`:
+Necessites dues variables d'entorn. Afegeix-les al teu `~/.zshrc`:
 
 ```bash
+export ANTHROPIC_API_KEY="sk-ant-..."  # mateixa clau que uses al panell
 export SUPABASE_KEY="eyJ..."           # service_role key de Supabase
-export PERPLEXITY_API_KEY="pplx-..."   # clau de api.perplexity.ai
 ```
 
-**Perplexity API key**: Registra't a [perplexity.ai/settings/api](https://www.perplexity.ai/settings/api). El pla gratuït inclou crèdits inicials. El model `sonar` costa ~$1/milió tokens (cada execució diària ~$0.01-0.02).
+**No requereix cap API addicional.** Usa la clau d'Anthropic que ja tens i fonts RSS públiques gratuïtes.
 
 Recàrrega: `source ~/.zshrc`
 
@@ -66,15 +66,18 @@ CREATE POLICY "allow_all" ON llista_tendencies FOR ALL USING (true) WITH CHECK (
 
 ## Flux
 
-1. Per cada categoria, crida Perplexity (`sonar`) amb un prompt especialitzat
-2. Perplexity fa cerca web en temps real i retorna JSON estructurat
-3. Cada troballa inclou: títol, resum, font, URL, valoració (oportunitat/risc/neutre)
-4. S'insereix a `llista_tendencies` amb `estat='pendent'`
-5. Des del panell l'usuari pot canviar estat a `guardat` o `eliminat`
+1. Per cada categoria, llegeix els RSS feeds associats (últimes 72h)
+2. Recull fins a 30 articles recents filtrant duplicats per URL
+3. Envia els articles a Claude (`claude-sonnet-4-6`) amb un prompt especialitzat
+4. Claude analitza, selecciona les 5 tendències més rellevants i les valora (oportunitat/risc/neutre)
+5. Si no hi ha articles recents als feeds, Claude usa el seu coneixement del sector
+6. S'insereix a `llista_tendencies` amb `estat='pendent'`
+7. Des del panell l'usuari pot guardar o eliminar cada entrada
 
 ## Errors comuns
 
-- **"Falta PERPLEXITY_API_KEY"** → Exporta la variable (veure Configuració)
+- **"Falta ANTHROPIC_API_KEY"** → Exporta la variable (veure Configuració)
 - **"Falta SUPABASE_KEY"** → Exporta la service_role key
-- **JSON invàlid de Perplexity** → Reintenta; rarament el model retorna format incorrecte
+- **RSS no disponible** → Avís al log, continua amb els altres feeds; Claude usa coneixement propi
+- **JSON invàlid de Claude** → Reintenta l'execució manual
 - **Error de taula** → Crea la taula amb el SQL de dalt (botó "⊞ SQL taula" al panell)

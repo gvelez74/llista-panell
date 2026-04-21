@@ -1,88 +1,136 @@
 #!/usr/bin/env python3
 """
 Agent de tendències — Llista.cat
-Cada dia a les 7:00h investiga les 5 principals novetats per categoria
-usant Perplexity (cerca web en temps real) i les desa a Supabase.
+Cada dia a les 7:00h llegeix RSS de fonts clau del sector, envia els articles
+a Claude per anàlisi i desa les 5 principals tendències per categoria a Supabase.
+No requereix Perplexity ni cap API de pagament addicional.
 """
 
 import os
 import sys
 import json
 import logging
-from datetime import date
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import httpx
+import anthropic
 from supabase import create_client
 
 # ── Configuració ──────────────────────────────────────────────────────────────
 
-BASE_DIR       = Path(__file__).parent
-LOG_FILE       = BASE_DIR / "agent-tendencies.log"
+BASE_DIR      = Path(__file__).parent
+LOG_FILE      = BASE_DIR / "agent-tendencies.log"
 
-SUPABASE_URL   = "https://dqwteqgdwmivepkdtehy.supabase.co"
-SUPABASE_KEY   = os.environ.get("SUPABASE_KEY", "")
-PERPLEXITY_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
+SUPABASE_URL  = "https://dqwteqgdwmivepkdtehy.supabase.co"
+SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
-PERPLEXITY_MODEL = "sonar"
+MODEL         = "claude-sonnet-4-6"   # Sonnet per millor capacitat analítica
+MAX_ARTICLES  = 30                    # Màxim articles per categoria per enviar a Claude
+HOURS_BACK    = 72                    # Finestra temporal (hores)
+
+# ── Fonts per categoria ───────────────────────────────────────────────────────
 
 CATEGORIES = [
     {
         "id": "algoritmes",
         "nom": "Algoritmes",
-        "context": "algorithm changes on YouTube, TikTok, Instagram, X/Twitter affecting content creator reach, visibility and engagement in 2025",
+        "focus": "algorithm changes on YouTube, TikTok, Instagram, X affecting creator reach and engagement",
+        "feeds": [
+            "https://blog.youtube/rss/",
+            "https://www.socialmediatoday.com/rss.xml",
+            "https://techcrunch.com/feed/",
+            "https://www.theverge.com/rss/index.xml",
+        ],
     },
     {
         "id": "metriques",
         "nom": "Mètriques i Analytics",
-        "context": "new metrics, analytics tools, measurement standards and KPIs for content creators and social media platforms in 2025",
+        "focus": "new metrics, analytics tools, measurement standards and KPIs for social media and content creators",
+        "feeds": [
+            "https://www.socialmediatoday.com/rss.xml",
+            "https://sproutsocial.com/insights/feed/",
+            "https://blog.hootsuite.com/feed/",
+            "https://techcrunch.com/feed/",
+        ],
     },
     {
         "id": "plataformes",
         "nom": "Tendències de Plataformes",
-        "context": "platform feature launches, monetization changes, policy updates on YouTube, TikTok, Instagram, LinkedIn, Twitch in 2025",
+        "focus": "new features, monetization changes, policy updates on YouTube, TikTok, Instagram, LinkedIn, Twitch",
+        "feeds": [
+            "https://blog.youtube/rss/",
+            "https://www.theverge.com/rss/index.xml",
+            "https://techcrunch.com/feed/",
+            "https://www.socialmediatoday.com/rss.xml",
+            "https://mashable.com/feeds/rss/all",
+        ],
     },
     {
         "id": "economia",
         "nom": "Economia de Creadors",
-        "context": "creator economy trends, brand deals, creator funds, sponsorship rates, monetization models, creator business news in 2025",
+        "focus": "creator economy trends, brand deals, monetization, creator funds, sponsorships, business models for content creators",
+        "feeds": [
+            "https://www.theinformation.com/feed",
+            "https://techcrunch.com/feed/",
+            "https://www.businessinsider.com/rss",
+            "https://www.socialmediatoday.com/rss.xml",
+        ],
     },
     {
         "id": "ia-contingut",
         "nom": "IA i Contingut",
-        "context": "AI tools for content creation, generative AI impact on creators, AI regulation for social media, synthetic media trends in 2025",
+        "focus": "AI tools for content creation, generative AI impact on creators, AI regulation for social media platforms",
+        "feeds": [
+            "https://techcrunch.com/feed/",
+            "https://www.theverge.com/rss/index.xml",
+            "https://www.wired.com/feed/rss",
+            "https://venturebeat.com/feed/",
+        ],
     },
     {
         "id": "mercat-hispanic",
         "nom": "Mercat Hispanòfon",
-        "context": "content creator trends in Spain, Latin America and Catalan-speaking markets, Hispanic digital media and creator ecosystem news in 2025",
+        "focus": "content creator trends in Spain, Latin America and Catalan-speaking markets, Hispanic digital media news",
+        "feeds": [
+            "https://marketing4ecommerce.net/feed/",
+            "https://www.puromarketing.com/rss/rss.xml",
+            "https://www.xataka.com/feedburner.xml",
+            "https://www.elconfidencial.com/rss/tecnologia.xml",
+        ],
     },
 ]
 
-SYSTEM_PROMPT = """Ets un expert analista de la indústria de la creació de contingut digital.
-La teva missió és identificar les novetats i tendències més rellevants per als creadors de contingut,
-amb especial atenció a les implicacions per a l'ecosistema de creadors en català i el mercat hispanòfon.
+SYSTEM_PROMPT = """Ets un expert analista sènior de la indústria de la creació de contingut digital.
+La teva especialitat és identificar tendències rellevants per als creadors de contingut,
+amb foco especial en l'ecosistema de creadors en català i el mercat hispanòfon.
 
-Quan analitzis cada tendència, valora si representa:
-- "oportunitat": benefici potencial per als creadors en català
-- "risc": amenaça o repte per als creadors en català
-- "neutre": informació rellevant sense impacte directe clar
+Per cada tendència identificada, valores si representa:
+- "oportunitat": benefici potencial per als creadors de contingut en català
+- "risc": amenaça o repte per als creadors de contingut en català
+- "neutre": informació rellevant però sense impacte directe clar
 
-Respon SEMPRE en català i retorna SEMPRE un JSON vàlid sense cap text addicional."""
+Respon SEMPRE en català. Retorna SEMPRE JSON vàlid sense cap text addicional."""
 
-RESEARCH_PROMPT = """Investiga les 5 novetats o tendències més importants i recents sobre: {context}
+ANALYSIS_PROMPT = """Analitza els articles següents sobre: {focus}
 
-Geogràficament cobreix: Catalunya/Espanya, Europa i USA/global.
+ARTICLES RECENTS:
+{articles}
 
-Per cada troballa retorna un objecte JSON amb exactament aquests camps:
-- "titol": títol descriptiu i concís (màx 12 paraules)
-- "resum": anàlisi de 3-4 frases que expliqui QUÈ ha passat, PER QUÈ és rellevant i QUIN IMPACTE té per als creadors en català
-- "font": nom de la publicació o plataforma font
-- "url": URL de la font (si disponible, sinó "")
+A partir d'aquests articles (i el teu coneixement del sector), identifica les 5 tendències
+o novetats més importants per als creadors de contingut en català.
+
+Per cada tendència retorna un objecte JSON amb exactament aquests camps:
+- "titol": títol descriptiu i concís (màx 12 paraules, en català)
+- "resum": anàlisi de 3-4 frases en català: QUÈ ha passat, PER QUÈ és rellevant i QUIN IMPACTE té per als creadors en català
+- "font": nom de la publicació font (de la llista d'articles o "Coneixement propi" si és d'elaboració pròpia)
+- "url": URL de l'article font (si disponible, sinó "")
 - "valoracio": "oportunitat", "risc" o "neutre"
 
-Retorna EXCLUSIVAMENT un array JSON de 5 objectes, sense text addicional ni markdown."""
+Retorna EXCLUSIVAMENT un array JSON de 5 objectes, sense text addicional ni markdown.
+Si no hi ha prou articles recents, complementa amb el teu coneixement actualitzat del sector."""
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -96,33 +144,118 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── RSS fetching ──────────────────────────────────────────────────────────────
 
-def research_category(cat: dict) -> list[dict]:
-    """Crida Perplexity per obtenir les 5 tendències d'una categoria."""
-    prompt = RESEARCH_PROMPT.format(context=cat["context"])
+def parse_date(date_str: str) -> datetime | None:
+    """Intenta parsejar dates RSS en múltiples formats."""
+    if not date_str:
+        return None
+    formats = [
+        "%a, %d %b %Y %H:%M:%S %z",
+        "%a, %d %b %Y %H:%M:%S GMT",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%SZ",
+    ]
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(date_str.strip(), fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    return None
 
-    headers = {
-        "Authorization": f"Bearer {PERPLEXITY_KEY}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "model": PERPLEXITY_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": prompt},
-        ],
-        "max_tokens": 2048,
-        "temperature": 0.2,
-    }
 
-    with httpx.Client(timeout=60) as client:
-        res = client.post(PERPLEXITY_URL, headers=headers, json=body)
-        res.raise_for_status()
+def fetch_rss(url: str, timeout: int = 15) -> list[dict]:
+    """Descàrrega i parseja un feed RSS. Retorna llista d'articles."""
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            res = client.get(url, headers={"User-Agent": "LlistaCAT-TrendBot/1.0"})
+            res.raise_for_status()
+        root = ET.fromstring(res.text)
+    except Exception as e:
+        log.warning("  RSS no disponible (%s): %s", url, e)
+        return []
 
-    raw = res.json()["choices"][0]["message"]["content"].strip()
+    # Suport per RSS 2.0 i Atom
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    items = []
 
-    # Elimina possibles code fences
+    # RSS 2.0
+    for item in root.findall(".//item"):
+        title   = (item.findtext("title") or "").strip()
+        link    = (item.findtext("link") or "").strip()
+        desc    = (item.findtext("description") or "").strip()[:300]
+        pubdate = item.findtext("pubDate") or item.findtext("dc:date", namespaces={"dc": "http://purl.org/dc/elements/1.1/"})
+        if title:
+            items.append({"title": title, "url": link, "summary": desc, "date_str": pubdate or ""})
+
+    # Atom
+    if not items:
+        for entry in root.findall("atom:entry", ns):
+            title   = (entry.findtext("atom:title", namespaces=ns) or "").strip()
+            link_el = entry.find("atom:link", ns)
+            link    = link_el.get("href", "") if link_el is not None else ""
+            summary = (entry.findtext("atom:summary", namespaces=ns) or "").strip()[:300]
+            pubdate = entry.findtext("atom:published", namespaces=ns) or entry.findtext("atom:updated", namespaces=ns)
+            if title:
+                items.append({"title": title, "url": link, "summary": summary, "date_str": pubdate or ""})
+
+    return items
+
+
+def collect_articles(cat: dict) -> list[dict]:
+    """Recull articles recents de tots els feeds d'una categoria."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS_BACK)
+    all_articles = []
+
+    for feed_url in cat["feeds"]:
+        articles = fetch_rss(feed_url)
+        for a in articles:
+            dt = parse_date(a["date_str"])
+            if dt is None or dt >= cutoff:
+                all_articles.append(a)
+
+    # Elimina duplicats per URL
+    seen = set()
+    unique = []
+    for a in all_articles:
+        key = a["url"] or a["title"]
+        if key not in seen:
+            seen.add(key)
+            unique.append(a)
+
+    log.info("  %d articles recollits de %d feeds", len(unique), len(cat["feeds"]))
+    return unique[:MAX_ARTICLES]
+
+
+def format_articles(articles: list[dict]) -> str:
+    """Formata els articles per al prompt de Claude."""
+    if not articles:
+        return "(No s'han trobat articles recents als feeds. Usa el teu coneixement actualitzat del sector.)"
+    lines = []
+    for i, a in enumerate(articles, 1):
+        lines.append(f"{i}. [{a['title']}]({a['url']})")
+        if a.get("summary"):
+            lines.append(f"   {a['summary']}")
+    return "\n".join(lines)
+
+# ── Claude analysis ───────────────────────────────────────────────────────────
+
+def analyze_with_claude(client: anthropic.Anthropic, cat: dict, articles: list[dict]) -> list[dict]:
+    """Envia els articles a Claude i obté les 5 tendències estructurades."""
+    articles_text = format_articles(articles)
+    prompt = ANALYSIS_PROMPT.format(focus=cat["focus"], articles=articles_text)
+
+    message = client.messages.create(
+        model=MODEL,
+        max_tokens=2048,
+        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -132,20 +265,19 @@ def research_category(cat: dict) -> list[dict]:
     items = json.loads(raw)
     if not isinstance(items, list):
         raise ValueError(f"Resposta inesperada (no és array): {raw[:200]}")
-
     return items[:5]
 
+# ── Supabase ──────────────────────────────────────────────────────────────────
 
-def save_to_supabase(sb, categoria_id: str, categoria_nom: str, items: list[dict], cerca_date: str) -> int:
-    """Insereix els ítems a llista_tendencies. Retorna el nombre inserit."""
+def save_to_supabase(sb, cat: dict, items: list[dict], cerca_date: str) -> int:
     records = []
     for item in items:
-        valoracio = item.get("valoracio", "neutre").lower()
+        valoracio = (item.get("valoracio") or "neutre").lower()
         if valoracio not in ("oportunitat", "risc", "neutre"):
             valoracio = "neutre"
         records.append({
-            "categoria_id":  categoria_id,
-            "categoria_nom": categoria_nom,
+            "categoria_id":  cat["id"],
+            "categoria_nom": cat["nom"],
             "titol":         (item.get("titol") or "")[:200],
             "resum":         item.get("resum") or "",
             "font":          (item.get("font") or "")[:200],
@@ -154,23 +286,22 @@ def save_to_supabase(sb, categoria_id: str, categoria_nom: str, items: list[dict
             "data_cerca":    cerca_date,
             "estat":         "pendent",
         })
-
     result = sb.table("llista_tendencies").insert(records).execute()
     return len(result.data) if result.data else 0
-
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    if not PERPLEXITY_KEY:
-        log.error("Falta PERPLEXITY_API_KEY. Exporta-la al teu entorn.")
+    if not ANTHROPIC_KEY:
+        log.error("Falta ANTHROPIC_API_KEY. Exporta-la al teu entorn.")
         sys.exit(1)
     if not SUPABASE_KEY:
         log.error("Falta SUPABASE_KEY. Exporta-la al teu entorn.")
         sys.exit(1)
 
-    sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-    cerca_date = date.today().isoformat()
+    sb     = create_client(SUPABASE_URL, SUPABASE_KEY)
+    claude = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    cerca_date = datetime.now().date().isoformat()
 
     log.info("Iniciant recerca de tendències — %s", cerca_date)
 
@@ -180,8 +311,9 @@ def main():
     for cat in CATEGORIES:
         log.info("→ Categoria: %s", cat["nom"])
         try:
-            items = research_category(cat)
-            saved = save_to_supabase(sb, cat["id"], cat["nom"], items, cerca_date)
+            articles = collect_articles(cat)
+            items    = analyze_with_claude(claude, cat, articles)
+            saved    = save_to_supabase(sb, cat, items, cerca_date)
             log.info("  ✓ %d tendències desades", saved)
             total_ok += saved
         except Exception as e:
